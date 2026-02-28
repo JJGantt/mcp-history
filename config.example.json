@@ -1,0 +1,37 @@
+{
+  "machine_name": "my-machine",
+  "data_dir": "~/history-data",
+  "default_source": "claude-my-machine",
+
+  "receiver": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 8766
+  },
+
+  "peer": {
+    "local_ip": "",
+    "tailscale_ip": "",
+    "ssh_user": "",
+    "ssh_key": "~/.ssh/id_ed25519",
+    "receiver_port": 8766,
+    "data_dir": ""
+  },
+
+  "sync": {
+    "debounce_seconds": 20,
+    "merge_days_back": 7
+  },
+
+  "notifications": {
+    "enabled": false,
+    "telegram_bot_token": "",
+    "telegram_chat_id": 0
+  },
+
+  "summarizer": {
+    "gap_threshold_secs": 1800,
+    "active_buffer_secs": 300,
+    "lookback_hours": 48
+  }
+}
