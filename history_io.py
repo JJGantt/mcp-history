@@ -52,7 +52,7 @@ def write_json_atomic(path: Path, data) -> None:
 
 
 def append_entry(source: str, user_msg: str, assistant_msg: str,
-                 timestamp: datetime | None = None) -> None:
+                 timestamp: datetime | None = None, **extra) -> None:
     """Append a single exchange to today's history file with file locking."""
     now = timestamp or datetime.now()
     target = day_file(now)
@@ -63,6 +63,7 @@ def append_entry(source: str, user_msg: str, assistant_msg: str,
         "user": user_msg,
         "claude": assistant_msg,
     }
+    entry.update(extra)
 
     with open(target, "a+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)

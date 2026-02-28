@@ -6,7 +6,7 @@
   "receiver": {
     "enabled": true,
     "host": "0.0.0.0",
-    "port": 8766
+    "port": 8767
   },
 
   "peer": {
@@ -14,7 +14,7 @@
     "tailscale_ip": "",
     "ssh_user": "",
     "ssh_key": "~/.ssh/id_ed25519",
-    "receiver_port": 8766,
+    "receiver_port": 8767,
     "data_dir": ""
   },
 
