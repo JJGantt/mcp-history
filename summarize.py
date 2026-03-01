@@ -1,84 +1,97 @@
 #!/usr/bin/env python3
 """
-Haiku-powered session summarizer for conversation history.
+Session summarizer — runs on a schedule (every 5 minutes via launchd).
 
-Groups history entries into sessions by configurable gap threshold, then calls
-Haiku to generate a 1-2 sentence summary + keywords for each session.
+For each session group (defined by 30-min gap boundaries), re-summarizes if
+new entries have appeared since the last summary. This means:
+  - Active sessions get a rolling update as new exchanges come in.
+  - Completed sessions get finalized once and are only touched if new
+    entries somehow appear (e.g. delayed sync from another device).
 
-Runs as part of the Stop hook chain after hook.py.
-Only summarizes sessions that ended beyond the active buffer window.
+Run by launchd — no forking needed, no stop hook recursion possible.
 """
 
 import json
+import os
 import subprocess
 import sys
 import uuid
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import CONFIG, SUMMARIES_DIR
+from config import CONFIG, SUMMARIES_DIR, get_channel
 from history_io import load_history_range, write_json_atomic
 from meta_filter import is_meta_entry
 
 _SUMMARIZER = CONFIG.get("summarizer", {})
 GAP_THRESHOLD_SECS = _SUMMARIZER.get("gap_threshold_secs", 1800)
-ACTIVE_BUFFER_SECS = _SUMMARIZER.get("active_buffer_secs", 300)
 LOOKBACK_HOURS = _SUMMARIZER.get("lookback_hours", 48)
 
 
-def load_all_summaries() -> list:
-    summaries = []
+def load_summaries_by_start() -> dict:
+    """Load all existing summaries keyed by session start timestamp."""
+    summaries = {}
     for f in sorted(SUMMARIES_DIR.glob("*.json")):
         try:
-            summaries.extend(json.loads(f.read_text()))
+            for s in json.loads(f.read_text()):
+                key = s.get("start", "")
+                if key:
+                    summaries[key] = s
         except Exception:
             pass
     return summaries
 
 
-def get_latest_summarized_end(summaries: list) -> datetime | None:
-    if not summaries:
-        return None
-    latest = max(summaries, key=lambda s: s.get("end", ""))
-    try:
-        return datetime.fromisoformat(latest["end"])
-    except Exception:
-        return None
+def save_or_update_summary(summary: dict) -> None:
+    """Write or update a single summary in its date file, matched by start."""
+    date_str = summary["date"]
+    summary_file = SUMMARIES_DIR / f"{date_str}.json"
+
+    existing = []
+    if summary_file.exists():
+        try:
+            existing = json.loads(summary_file.read_text())
+        except Exception:
+            pass
+
+    start = summary.get("start", "")
+    replaced = False
+    for i, s in enumerate(existing):
+        if s.get("start") == start:
+            existing[i] = summary
+            replaced = True
+            break
+    if not replaced:
+        existing.append(summary)
+
+    write_json_atomic(summary_file, existing)
 
 
-def save_summaries(new_summaries: list) -> None:
-    by_date: dict[str, list] = {}
-    for s in new_summaries:
-        by_date.setdefault(s["date"], []).append(s)
+def group_into_sessions(entries: list) -> list[tuple[str, list]]:
+    """Group entries into (channel, session_entries) pairs by 30-min gaps."""
+    by_channel: dict[str, list] = defaultdict(list)
+    for e in entries:
+        ch = get_channel(e.get("source", "unknown"))
+        by_channel[ch].append(e)
 
-    for date_str, day_summaries in by_date.items():
-        summary_file = SUMMARIES_DIR / f"{date_str}.json"
-        existing = []
-        if summary_file.exists():
-            try:
-                existing = json.loads(summary_file.read_text())
-            except Exception:
-                pass
-        existing.extend(day_summaries)
-        write_json_atomic(summary_file, existing)
-
-
-def group_into_sessions(entries: list) -> list[list]:
-    if not entries:
-        return []
     sessions = []
-    current = [entries[0]]
-    for entry in entries[1:]:
-        prev_ts = datetime.fromisoformat(current[-1]["timestamp"])
-        curr_ts = datetime.fromisoformat(entry["timestamp"])
-        if (curr_ts - prev_ts).total_seconds() >= GAP_THRESHOLD_SECS:
-            sessions.append(current)
-            current = [entry]
-        else:
-            current.append(entry)
-    sessions.append(current)
+    for channel, channel_entries in by_channel.items():
+        channel_entries.sort(key=lambda e: e.get("timestamp", ""))
+        current = [channel_entries[0]]
+        for entry in channel_entries[1:]:
+            prev_ts = datetime.fromisoformat(current[-1]["timestamp"])
+            curr_ts = datetime.fromisoformat(entry["timestamp"])
+            if (curr_ts - prev_ts).total_seconds() >= GAP_THRESHOLD_SECS:
+                sessions.append((channel, current))
+                current = [entry]
+            else:
+                current.append(entry)
+        sessions.append((channel, current))
+
+    sessions.sort(key=lambda s: s[1][0].get("timestamp", ""))
     return sessions
 
 
@@ -103,12 +116,15 @@ def summarize_session(entries: list) -> dict:
     )
 
     try:
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("CLAUDECODE", "CLAUDE_CODE_SESSION")}
         result = subprocess.run(
             ["claude", "-p", "--model", "haiku", "--dangerously-skip-permissions"],
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=60,
+            env=env,
         )
         text = (result.stdout or "").strip()
         start = text.find("{")
@@ -122,13 +138,8 @@ def summarize_session(entries: list) -> dict:
 
 
 def main():
-    existing = load_all_summaries()
-    latest_end = get_latest_summarized_end(existing)
-
     now = datetime.now()
     start = now - timedelta(hours=LOOKBACK_HOURS)
-    if latest_end and latest_end > start:
-        start = latest_end + timedelta(seconds=1)
 
     entries = load_history_range(start, now)
     entries = [e for e in entries if not is_meta_entry(e)]
@@ -137,40 +148,37 @@ def main():
         return
 
     sessions = group_into_sessions(entries)
-    new_summaries = []
+    existing = load_summaries_by_start()
 
-    for session in sessions:
-        session_end = datetime.fromisoformat(session[-1]["timestamp"])
-        if (now - session_end).total_seconds() < ACTIVE_BUFFER_SECS:
+    for channel, session in sessions:
+        session_start = session[0]["timestamp"]
+        session_end = session[-1]["timestamp"]
+
+        existing_summary = existing.get(session_start)
+
+        # Skip if nothing new since last summary
+        if existing_summary and existing_summary.get("end", "") >= session_end:
             continue
 
         result = summarize_session(session)
-        session_start = datetime.fromisoformat(session[0]["timestamp"])
         sources = list(dict.fromkeys(e.get("source", "") for e in session))
 
-        new_summaries.append({
-            "uuid": str(uuid.uuid4()),
-            "date": session_start.strftime("%Y-%m-%d"),
-            "start": session[0]["timestamp"],
-            "end": session[-1]["timestamp"],
+        summary = {
+            "uuid": existing_summary["uuid"] if existing_summary else str(uuid.uuid4()),
+            "date": datetime.fromisoformat(session_start).strftime("%Y-%m-%d"),
+            "channel": channel,
+            "start": session_start,
+            "end": session_end,
             "sources": sources,
             "entry_count": len(session),
             "summary": result.get("summary", ""),
             "keywords": result.get("keywords", []),
-        })
+        }
 
-    if new_summaries:
-        save_summaries(new_summaries)
+        save_or_update_summary(summary)
 
 
 if __name__ == "__main__":
-    # Fork to background immediately so the Stop hook doesn't block.
-    import os
-    pid = os.fork()
-    if pid != 0:
-        sys.exit(0)  # Parent exits instantly; child does the work.
-    os.setsid()      # Detach from the controlling terminal.
-
     try:
         main()
     except Exception:

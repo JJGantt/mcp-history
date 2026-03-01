@@ -15,7 +15,7 @@ All paths are read from config.json — no hardcoded machine-specific values.
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import chromadb
 from mcp.server import Server
@@ -253,25 +253,25 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="get_summaries",
             description=(
-                "Get compact Haiku-generated session summaries for a date or date range. "
-                "START HERE when you want an overview of recent activity — a full day "
-                "fits in ~30 lines (1-2 sentence summary + keywords per session). "
-                "Each session has a short UUID. Use get_session(uuid) to drill into "
-                "the full raw entries for any session of interest. "
-                "Use this before get_history when the user asks what happened recently, "
-                "wants a recap, or you need to find a specific topic without knowing the date."
+                "START HERE — always call this first when you need context about past "
+                "conversations. Returns Haiku-generated session summaries grouped by source "
+                "channel. A full week fits in ~200 lines. Each session has a UUID — use "
+                "get_session(uuid) to see the entries, then get_response/get_trace for details. "
+                "Date defaults to last 7 days if not specified."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "date": date_props["date"],
+                    "date": {
+                        "type": "string",
+                        "description": "Date in YYYY-MM-DD format. Defaults to 7 days ago if omitted.",
+                    },
                     "end_date": date_props["end_date"],
                     "limit": {
                         "type": "integer",
                         "description": "Max summaries to return (default 50).",
                     },
                 },
-                "required": ["date"],
             },
         ),
         types.Tool(
@@ -296,17 +296,11 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="get_history",
             description=(
-                "List conversation history for a specific date or date range. "
-                "Returns only user messages (no responses) with entry IDs. "
-                "Entries marked [has tools] have full trace data (tool calls, reasoning) "
-                "accessible via get_trace. Use get_response for the text reply. "
-                "Returns the most recent entries up to the limit (default 20). "
-                "ALWAYS use this tool before claiming you don't know or don't remember something. "
-                "Use whenever the user references anything that might have come up in a past conversation — "
-                "even vaguely, e.g. 'like we discussed', 'remember when', 'what was that thing', "
-                "'earlier you said', 'last time', or any topic you lack context for that the user seems "
-                "to expect you to know. When the user specifies a time (yesterday, last week, March 3rd), "
-                "use this tool for that date range first, then search_history if needed."
+                "Raw entry listing for a date range. Prefer get_summaries for overview. "
+                "Use this only for entries not yet summarized or when you need the raw "
+                "chronological view with entry IDs. Returns user messages with entry IDs. "
+                "Entries marked [has tools] have trace data via get_trace. "
+                "Use get_response for the full text reply."
             ),
             inputSchema={
                 "type": "object",
@@ -360,19 +354,14 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="search_history",
             description=(
-                "Semantic search over conversation history using vector embeddings — "
-                "finds results by meaning, not just exact keywords. "
-                "Searches both user messages and Claude responses. "
+                "Semantic search via vector embeddings — use when get_summaries doesn't "
+                "surface what you need, or when searching a very wide time range by meaning. "
+                "Finds results by semantic similarity, not just keywords. "
                 "Returns matching entries with entry IDs. "
-                "Entries marked [has tools] have trace data available via get_trace. "
-                "Use get_response to see the full reply for a specific entry. "
-                "Returns up to limit matches ranked by relevance (default 20). "
-                "ALWAYS use this tool before claiming you don't know or don't remember something. "
-                "Use whenever the user references a topic, decision, item, or conversation that isn't "
-                "in your current context — even if they don't explicitly say 'search history'. "
-                "When the user specifies a time (yesterday, last week, March 3rd), use appropriate dates. "
-                "The 'source' filter is ONLY for when the user explicitly mentions a specific channel "
-                "(e.g. 'from Telegram', 'on my Mac', 'from voice') — do not use it otherwise."
+                "Entries marked [has tools] have trace data via get_trace. "
+                "Use get_response for the full reply. "
+                "The 'source' filter is ONLY for when the user explicitly mentions a channel "
+                "(e.g. 'from Telegram', 'on my Mac', 'from voice')."
             ),
             inputSchema={
                 "type": "object",
@@ -416,9 +405,13 @@ async def list_tools() -> list[types.Tool]:
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if name == "get_summaries":
         try:
-            start = parse_date(arguments["date"])
+            date_str = arguments.get("date")
+            if date_str:
+                start = parse_date(date_str)
+            else:
+                start = datetime.now() - timedelta(days=7)
             end_str = arguments.get("end_date")
-            end = parse_date(end_str) if end_str else start
+            end = parse_date(end_str) if end_str else datetime.now()
             end = end.replace(hour=23, minute=59, second=59)
         except ValueError as e:
             return [types.TextContent(type="text", text=str(e))]

@@ -100,7 +100,7 @@ def main():
 
     append_entry(source, user_msg, last_assistant)
 
-    # Fork here: local write is done, so index.py can safely run after us.
+    # Fork here: local write is done, so index_history.py can safely run after us.
     # Peer sync happens in the background and doesn't block the response.
     pid = os.fork()
     if pid != 0:

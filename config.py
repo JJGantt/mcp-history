@@ -46,3 +46,18 @@ CHROMADB_DIR = Path(CONFIG["data_dir"]) / "history-chromadb"
 HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 SUMMARIES_DIR.mkdir(parents=True, exist_ok=True)
 CHROMADB_DIR.mkdir(parents=True, exist_ok=True)
+
+# Source → channel mapping (shared by summarizer, context builder, etc.)
+CHANNEL_MAP = {
+    "claude-mac": "mac", "codex-mac": "mac",
+    "claude-telegram": "telegram", "codex-telegram": "telegram",
+    "opus-telegram": "telegram", "sonnet-telegram": "telegram",
+    "haiku-telegram": "telegram", "pi-telegram": "telegram",
+    "claude-http": "http", "codex-http": "http",
+    "claude-voice": "voice",
+    "claude-pi": "pi", "codex-pi": "pi",
+}
+
+
+def get_channel(source: str) -> str:
+    return CHANNEL_MAP.get(source, source)
