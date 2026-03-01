@@ -29,7 +29,7 @@ def get_peer_url(path: str) -> str | None:
     for host in hosts:
         try:
             req = urllib.request.Request(f"http://{host}:{port}/status")
-            urllib.request.urlopen(req, timeout=2)
+            urllib.request.urlopen(req, timeout=5)
             return f"http://{host}:{port}{path}"
         except Exception:
             continue
@@ -100,6 +100,13 @@ def main():
 
     append_entry(source, user_msg, last_assistant)
 
+    # Fork here: local write is done, so index.py can safely run after us.
+    # Peer sync happens in the background and doesn't block the response.
+    pid = os.fork()
+    if pid != 0:
+        return  # Parent returns immediately.
+    os.setsid()
+
     log_url = get_peer_url("/log")
     if not log_url:
         _notify("Warning: history hook could not reach peer — logged locally only.")
@@ -119,7 +126,7 @@ def main():
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        urllib.request.urlopen(req, timeout=3)
+        urllib.request.urlopen(req, timeout=5)
     except Exception as e:
         _notify(f"Warning: history hook failed to POST to peer: {e}")
 
