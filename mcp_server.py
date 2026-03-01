@@ -113,7 +113,7 @@ def _format_trace(trace: list) -> str:
         if isinstance(item, dict):
             typ = item.get("type", "")
             if typ == "assistant":
-                content = item.get("content", [])
+                content = item.get("content") or item.get("message", {}).get("content", [])
                 if isinstance(content, list):
                     for block in content:
                         bt = block.get("type", "")
@@ -126,7 +126,7 @@ def _format_trace(trace: list) -> str:
                         elif bt == "thinking":
                             lines.append(f"[thinking] {block.get('thinking', '')}")
             elif typ == "user":
-                content = item.get("content", [])
+                content = item.get("content") or item.get("message", {}).get("content", [])
                 if isinstance(content, list):
                     for block in content:
                         bt = block.get("type", "")
