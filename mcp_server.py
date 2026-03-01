@@ -15,7 +15,8 @@ All paths are read from config.json — no hardcoded machine-specific values.
 
 import json
 import logging
-from datetime import datetime, timedelta
+import math
+from datetime import datetime, timedelta, timezone
 
 from mcp.server import Server
 import mcp.server.stdio
@@ -313,14 +314,15 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Semantic search via vector embeddings — use when get_summaries doesn't "
                 "surface what you need, or when searching a very wide time range by meaning. "
-                "WARNING: ranks by semantic similarity NOT recency — will surface old matching "
-                "content over recent content. Always try get_summaries(today) first for "
-                "recent questions before falling back to this tool. "
-                "Finds results by semantic similarity, not just keywords. "
+                "Results are ranked by a combined similarity + recency score. "
+                "Always try get_summaries(today) first for recent questions before this tool. "
                 "Returns matching entries with entry IDs. Entries marked [has tools] have "
                 "trace data via get_trace. Use get_response for the full reply. "
                 "The 'source' filter is ONLY for when the user explicitly mentions a channel "
-                "or specific bot (e.g. 'Opus bot', 'from Telegram', 'on my Mac', 'from voice')."
+                "or specific bot (e.g. 'Opus bot', 'from Telegram', 'on my Mac', 'from voice'). "
+                "Tune recency_weight based on the nature of the question: "
+                "increase toward 1.0 for questions about recent/today activity; "
+                "decrease toward 0.0 for broad topic searches across all time."
             ),
             inputSchema={
                 "type": "object",
@@ -340,6 +342,18 @@ async def list_tools() -> list[types.Tool]:
                     "limit": {
                         "type": "integer",
                         "description": "Max results to return (default 20).",
+                    },
+                    "recency_weight": {
+                        "type": "number",
+                        "description": (
+                            "How much to weight recency vs semantic similarity. "
+                            "Range 0.0–1.0. Default 0.3. "
+                            "0.0 = pure similarity (ignore time entirely, good for broad topic searches). "
+                            "0.3 = default, mild recency bias. "
+                            "0.6–0.8 = strong recency bias, good for 'what was I doing recently'. "
+                            "1.0 = pure recency (sort by time only, ignores relevance). "
+                            "Decay half-life is ~7 days — entries older than a week score noticeably lower."
+                        ),
                     },
                     "source": {
                         "type": "string",
@@ -445,6 +459,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return [types.TextContent(type="text", text=str(e))]
 
         limit = get_limit(arguments)
+        recency_weight = float(arguments.get("recency_weight", 0.3))
+        recency_weight = max(0.0, min(1.0, recency_weight))
+        lambda_decay = 0.1  # half-life ~7 days
         source = arguments.get("source", "").strip().lower()
 
         source_where = None
@@ -472,11 +489,12 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         if total == 0:
             return [types.TextContent(type="text", text="No history indexed yet.")]
 
-        n_results = min(limit, total)
+        # Fetch more than needed so re-ranking has candidates to work with
+        n_fetch = min(limit * 3, total)
         try:
             results = collection.query(
                 query_texts=[query],
-                n_results=n_results,
+                n_results=n_fetch,
                 where=where,
             )
         except Exception:
@@ -488,17 +506,30 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                         filtered_ids.append(doc_id)
                         filtered_meta.append(meta)
                         filtered_dist.append(dist)
-                results = {"ids": [filtered_ids[:limit]], "metadatas": [filtered_meta[:limit]], "distances": [filtered_dist[:limit]]}
+                results = {"ids": [filtered_ids], "metadatas": [filtered_meta], "distances": [filtered_dist]}
             except Exception as e2:
                 return [types.TextContent(type="text", text=f"Search error: {e2}")]
 
         ids = results["ids"][0]
         metas = results["metadatas"][0]
+        dists = results["distances"][0]
         if not ids:
             return [types.TextContent(type="text", text=f"No matches for '{query}'.")]
 
+        # Re-rank by combined similarity + recency score
+        now_unix = datetime.now(timezone.utc).timestamp()
+        scored = []
+        for meta, dist in zip(metas, dists):
+            similarity = max(0.0, 1.0 - dist)
+            ts_unix = meta.get("timestamp_unix", 0)
+            days_ago = max(0.0, (now_unix - ts_unix) / 86400)
+            recency = math.exp(-lambda_decay * days_ago)
+            score = (1.0 - recency_weight) * similarity + recency_weight * recency
+            scored.append((score, meta))
+        scored.sort(key=lambda x: x[0], reverse=True)
+
         lines = []
-        for meta in metas:
+        for _, meta in scored[:limit]:
             ts_str = meta.get("timestamp", "")
             try:
                 ts_fmt = datetime.fromisoformat(ts_str).strftime("%Y-%m-%d %H:%M")
