@@ -156,8 +156,10 @@ def main():
 
         existing_summary = existing.get(session_start)
 
-        # Skip if nothing new since last summary
-        if existing_summary and existing_summary.get("end", "") >= session_end:
+        # Skip if nothing new since last summary AND summary is valid
+        if (existing_summary
+                and existing_summary.get("summary", "") not in ("", "Summary unavailable.")
+                and existing_summary.get("end", "") >= session_end):
             continue
 
         result = summarize_session(session)
