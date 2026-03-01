@@ -17,13 +17,11 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-import chromadb
 from mcp.server import Server
 import mcp.server.stdio
 import mcp.types as types
 
 from config import HISTORY_DIR, CHROMADB_DIR
-from meta_filter import is_meta_entry
 from history_io import (
     load_history_range,
     load_summaries_range,
@@ -39,62 +37,17 @@ _collection = None
 
 
 # ---------------------------------------------------------------------------
-# ChromaDB index
+# ChromaDB index — lazy loaded, read-only
 # ---------------------------------------------------------------------------
 
-def build_or_load_index() -> None:
+def _get_collection():
+    """Open the existing ChromaDB index. Rebuilt separately by index_history.py."""
     global _collection
-    client = chromadb.PersistentClient(path=str(CHROMADB_DIR))
-
-    all_entries = []
-    for f in sorted(HISTORY_DIR.glob("*.json")):
-        date_str = f.stem
-        try:
-            datetime.strptime(date_str, "%Y-%m-%d")
-        except ValueError:
-            continue
-        try:
-            raw = json.loads(f.read_text())
-        except Exception:
-            continue
-        filtered = [e for e in raw if not is_meta_entry(e)]
-        for i, e in enumerate(filtered):
-            all_entries.append((date_str, i, e))
-
-    collection = client.get_or_create_collection("history")
-
-    if collection.count() != len(all_entries):
-        log.info(f"Rebuilding history index: {len(all_entries)} entries")
-        client.delete_collection("history")
-        collection = client.create_collection("history")
-        if all_entries:
-            batch_size = 100
-            for b in range(0, len(all_entries), batch_size):
-                batch = all_entries[b:b + batch_size]
-                collection.upsert(
-                    ids=[f"{date}_{i}" for date, i, _ in batch],
-                    documents=[
-                        (e.get("user", "") + " " + e.get("claude", ""))[:8000]
-                        for _, _, e in batch
-                    ],
-                    metadatas=[{
-                        "date": date,
-                        "day_index": i,
-                        "source": e.get("source", "unknown"),
-                        "timestamp": e.get("timestamp", ""),
-                        "timestamp_unix": int(datetime.fromisoformat(
-                            e.get("timestamp", "1970-01-01T00:00:00")
-                        ).timestamp()),
-                        "has_tool_use": "true" if e.get("has_tool_use") else "false",
-                        "user_preview": e.get("user", "")[:300],
-                    } for date, i, e in batch]
-                )
-        log.info("Index build complete")
-
-    _collection = collection
-
-
-build_or_load_index()
+    if _collection is None:
+        import chromadb
+        client = chromadb.PersistentClient(path=str(CHROMADB_DIR))
+        _collection = client.get_or_create_collection("history")
+    return _collection
 
 
 # ---------------------------------------------------------------------------
@@ -505,20 +458,21 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
         where = {"$and": [date_where, source_where]} if source_where else date_where
 
-        total = _collection.count()
+        collection = _get_collection()
+        total = collection.count()
         if total == 0:
             return [types.TextContent(type="text", text="No history indexed yet.")]
 
         n_results = min(limit, total)
         try:
-            results = _collection.query(
+            results = collection.query(
                 query_texts=[query],
                 n_results=n_results,
                 where=where,
             )
         except Exception:
             try:
-                results = _collection.query(query_texts=[query], n_results=min(limit * 3, total))
+                results = collection.query(query_texts=[query], n_results=min(limit * 3, total))
                 filtered_ids, filtered_meta, filtered_dist = [], [], []
                 for doc_id, meta, dist in zip(results["ids"][0], results["metadatas"][0], results["distances"][0]):
                     if start_unix <= meta.get("timestamp_unix", 0) <= end_unix:
