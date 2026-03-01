@@ -210,7 +210,11 @@ async def list_tools() -> list[types.Tool]:
                 "conversations. Returns Haiku-generated session summaries grouped by source "
                 "channel. A full week fits in ~200 lines. Each session has a UUID — use "
                 "get_session(uuid) to see the entries, then get_response/get_trace for details. "
-                "Date defaults to last 7 days if not specified."
+                "Date defaults to last 7 days if not specified. "
+                "IMPORTANT: When the user asks about recent or today's conversations (e.g. "
+                "'what was I talking about with X', 'what did we discuss about Y'), always "
+                "pass TODAY's date explicitly — do not rely on the 7-day default. Recency-"
+                "implied questions always mean today first."
             ),
             inputSchema={
                 "type": "object",
@@ -309,12 +313,14 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Semantic search via vector embeddings — use when get_summaries doesn't "
                 "surface what you need, or when searching a very wide time range by meaning. "
+                "WARNING: ranks by semantic similarity NOT recency — will surface old matching "
+                "content over recent content. Always try get_summaries(today) first for "
+                "recent questions before falling back to this tool. "
                 "Finds results by semantic similarity, not just keywords. "
-                "Returns matching entries with entry IDs. "
-                "Entries marked [has tools] have trace data via get_trace. "
-                "Use get_response for the full reply. "
+                "Returns matching entries with entry IDs. Entries marked [has tools] have "
+                "trace data via get_trace. Use get_response for the full reply. "
                 "The 'source' filter is ONLY for when the user explicitly mentions a channel "
-                "(e.g. 'from Telegram', 'on my Mac', 'from voice')."
+                "or specific bot (e.g. 'Opus bot', 'from Telegram', 'on my Mac', 'from voice')."
             ),
             inputSchema={
                 "type": "object",
@@ -338,9 +344,12 @@ async def list_tools() -> list[types.Tool]:
                     "source": {
                         "type": "string",
                         "description": (
-                            "Only use when user explicitly specifies a channel. "
-                            "Exact values: claude-mac, codex-mac, claude-telegram, codex-telegram, "
-                            "claude-voice, claude-pi. Group aliases: mac, telegram, pi, voice."
+                            "Only use when user explicitly specifies a channel or bot. "
+                            "Exact bot sources: opus-telegram, sonnet-telegram, haiku-telegram, "
+                            "pi-telegram, claude-mac, codex-mac, claude-voice, claude-pi. "
+                            "Group aliases: mac (claude-mac + codex-mac), telegram (all *-telegram), "
+                            "pi (claude-pi + codex-pi), voice (claude-voice). "
+                            "When user says 'Opus bot' or 'talking to Opus', use 'opus-telegram'."
                         ),
                     },
                 },
@@ -442,7 +451,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         if source:
             source_map = {
                 "mac": ["claude-mac", "codex-mac"],
-                "telegram": ["claude-telegram", "codex-telegram"],
+                "telegram": ["claude-telegram", "codex-telegram", "opus-telegram", "sonnet-telegram", "haiku-telegram", "pi-telegram"],
                 "pi": ["claude-pi", "codex-pi"],
                 "voice": ["claude-voice"],
             }
