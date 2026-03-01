@@ -13,4 +13,5 @@ def is_meta_entry(entry: dict) -> bool:
         or user.startswith("A previous Claude subprocess")
         or user.startswith("The Codex CLI subprocess")
         or user.startswith("You are responding to")
+        or user.startswith("Summarize these conversation exchanges")
     )

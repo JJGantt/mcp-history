@@ -118,6 +118,7 @@ def summarize_session(entries: list) -> dict:
     try:
         env = {k: v for k, v in os.environ.items()
                if k not in ("CLAUDECODE", "CLAUDE_CODE_SESSION")}
+        env["CLAUDE_SOURCE"] = "system"
         result = subprocess.run(
             ["claude", "-p", "--model", "haiku", "--dangerously-skip-permissions"],
             input=prompt,
