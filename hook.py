@@ -29,7 +29,7 @@ def get_peer_url(path: str) -> str | None:
     for host in hosts:
         try:
             req = urllib.request.Request(f"http://{host}:{port}/status")
-            urllib.request.urlopen(req, timeout=5)
+            urllib.request.urlopen(req, timeout=2)
             return f"http://{host}:{port}{path}"
         except Exception:
             continue
@@ -119,7 +119,7 @@ def main():
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        urllib.request.urlopen(req, timeout=5)
+        urllib.request.urlopen(req, timeout=3)
     except Exception as e:
         _notify(f"Warning: history hook failed to POST to peer: {e}")
 

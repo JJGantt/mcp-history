@@ -164,6 +164,13 @@ def main():
 
 
 if __name__ == "__main__":
+    # Fork to background immediately so the Stop hook doesn't block.
+    import os
+    pid = os.fork()
+    if pid != 0:
+        sys.exit(0)  # Parent exits instantly; child does the work.
+    os.setsid()      # Detach from the controlling terminal.
+
     try:
         main()
     except Exception:
