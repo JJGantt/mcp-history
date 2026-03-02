@@ -166,8 +166,18 @@ def main():
         result = summarize_session(session)
         sources = list(dict.fromkeys(e.get("source", "") for e in session))
 
+        # Use Claude Code session ID if available, otherwise preserve existing or generate new
+        session_ids = [e["session_id"] for e in session if e.get("session_id")]
+        if session_ids:
+            from collections import Counter
+            sid = Counter(session_ids).most_common(1)[0][0]
+        elif existing_summary:
+            sid = existing_summary["uuid"]
+        else:
+            sid = str(uuid.uuid4())
+
         summary = {
-            "uuid": existing_summary["uuid"] if existing_summary else str(uuid.uuid4()),
+            "uuid": sid,
             "date": datetime.fromisoformat(session_start).strftime("%Y-%m-%d"),
             "channel": channel,
             "start": session_start,
