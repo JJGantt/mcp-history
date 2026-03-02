@@ -7,8 +7,10 @@ Only indexes new entries since last run. Tracks state via a small JSON file
 to avoid re-scanning the entire collection each time.
 """
 
+import fcntl
 import json
 import logging
+import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -38,10 +40,39 @@ def _save_state(state: dict):
     STATE_FILE.write_text(json.dumps(state) + "\n")
 
 
+def _ensure_wal_mode():
+    """Switch ChromaDB's SQLite to WAL journal mode for safe concurrent access."""
+    db_path = CHROMADB_DIR / "chroma.sqlite3"
+    if db_path.exists():
+        conn = sqlite3.connect(str(db_path))
+        mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        conn.close()
+        log.info(f"SQLite journal_mode={mode}")
+
+
 def update_index():
+    lock_path = CHROMADB_DIR / "index.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log.info("Another indexer is running, skipping")
+        lock_fd.close()
+        return
+    try:
+        _update_index_locked()
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+
+def _update_index_locked():
     import chromadb
     client = chromadb.PersistentClient(path=str(CHROMADB_DIR))
     collection = client.get_or_create_collection("history")
+
+    _ensure_wal_mode()
 
     # State tracks {date_str: entry_count} for files we've already indexed
     state = _load_state()
@@ -88,6 +119,7 @@ def update_index():
                 "date": date,
                 "day_index": i,
                 "source": e.get("source", "unknown"),
+                "session_id": e.get("session_id", ""),
                 "timestamp": e.get("timestamp", ""),
                 "timestamp_unix": int(datetime.fromisoformat(
                     e.get("timestamp", "1970-01-01T00:00:00")
