@@ -42,6 +42,11 @@ _RSYNC_EXCLUDES = [
     "*.sqlite3-wal", "*.sqlite3-shm",
 ]
 
+# health/ is excluded from pull only — Mac is authoritative for workouts.
+# Push still syncs Mac→Pi so Pi can read workout data.
+# This prevents the Pi's stale copy from overwriting Mac after a write.
+_PULL_EXCLUDES = _RSYNC_EXCLUDES + ["health/"]
+
 
 def _find_host():
     """Find reachable peer host."""
@@ -100,12 +105,14 @@ def _reset_failures():
         _FAIL_FILE.unlink(missing_ok=True)
 
 
-def _rsync(src: str, dest: str, host: str):
+def _rsync(src: str, dest: str, host: str, excludes: list = None):
     """Run rsync between local and remote."""
     user = _PEER.get("ssh_user", "")
     key = _PEER.get("ssh_key", "")
+    if excludes is None:
+        excludes = _RSYNC_EXCLUDES
     exclude_args = []
-    for exc in _RSYNC_EXCLUDES:
+    for exc in excludes:
         exclude_args.extend(["--exclude", exc])
 
     cmd = [
@@ -144,7 +151,7 @@ def pull(host: str):
     local_dir = CONFIG["data_dir"].rstrip("/") + "/"
     remote_dir = _PEER["data_dir"].rstrip("/") + "/"
     user = _PEER.get("ssh_user", "")
-    _rsync(f"{user}@{host}:{remote_dir}", local_dir, host)
+    _rsync(f"{user}@{host}:{remote_dir}", local_dir, host, excludes=_PULL_EXCLUDES)
     _run_merge(host)
 
 
