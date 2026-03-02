@@ -170,7 +170,7 @@ def _format_summaries(summaries: list) -> str:
         except Exception:
             start = s.get("start", "?")
             end = "?"
-        uid = s.get("uuid", "?")[:8]
+        uid = s.get("uuid", "?")
         sources = ", ".join(s.get("sources", []))
         count = s.get("entry_count", "?")
         summary = s.get("summary", "")
