@@ -33,7 +33,8 @@ class HistoryHandler(BaseHTTPRequestHandler):
                 source = body.get("source", "unknown")
                 ts_str = body.get("timestamp")
                 ts = datetime.fromisoformat(ts_str) if ts_str else None
-                append_entry(source, user, claude, timestamp=ts)
+                extra = {k: v for k, v in body.items() if k not in ("user", "claude", "source", "timestamp")}
+                append_entry(source, user, claude, timestamp=ts, **extra)
                 self._respond(200, {"ok": True})
             except Exception as e:
                 self._respond(500, {"ok": False, "error": str(e)})
