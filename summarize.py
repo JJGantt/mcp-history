@@ -2,11 +2,8 @@
 """
 Session summarizer — runs on a schedule (every 5 minutes via launchd).
 
-For each session group (defined by 30-min gap boundaries), re-summarizes if
-new entries have appeared since the last summary. This means:
-  - Active sessions get a rolling update as new exchanges come in.
-  - Completed sessions get finalized once and are only touched if new
-    entries somehow appear (e.g. delayed sync from another device).
+Groups entries by session_id (from Claude Code transcript filenames).
+Re-summarizes if new entries have appeared since the last summary.
 
 Run by launchd — no forking needed, no stop hook recursion possible.
 """
@@ -15,8 +12,7 @@ import json
 import os
 import subprocess
 import sys
-import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -27,17 +23,16 @@ from history_io import load_history_range, write_json_atomic
 from meta_filter import is_meta_entry
 
 _SUMMARIZER = CONFIG.get("summarizer", {})
-GAP_THRESHOLD_SECS = _SUMMARIZER.get("gap_threshold_secs", 1800)
 LOOKBACK_HOURS = _SUMMARIZER.get("lookback_hours", 48)
 
 
-def load_summaries_by_start() -> dict:
-    """Load all existing summaries keyed by session start timestamp."""
+def load_summaries_by_uuid() -> dict:
+    """Load all existing summaries keyed by UUID (session_id)."""
     summaries = {}
     for f in sorted(SUMMARIES_DIR.glob("*.json")):
         try:
             for s in json.loads(f.read_text()):
-                key = s.get("start", "")
+                key = s.get("uuid", "")
                 if key:
                     summaries[key] = s
         except Exception:
@@ -46,7 +41,7 @@ def load_summaries_by_start() -> dict:
 
 
 def save_or_update_summary(summary: dict) -> None:
-    """Write or update a single summary in its date file, matched by start."""
+    """Write or update a single summary in its date file, matched by uuid."""
     date_str = summary["date"]
     summary_file = SUMMARIES_DIR / f"{date_str}.json"
 
@@ -57,10 +52,10 @@ def save_or_update_summary(summary: dict) -> None:
         except Exception:
             pass
 
-    start = summary.get("start", "")
+    uid = summary.get("uuid", "")
     replaced = False
     for i, s in enumerate(existing):
-        if s.get("start") == start:
+        if s.get("uuid") == uid:
             existing[i] = summary
             replaced = True
             break
@@ -70,28 +65,22 @@ def save_or_update_summary(summary: dict) -> None:
     write_json_atomic(summary_file, existing)
 
 
-def group_into_sessions(entries: list) -> list[tuple[str, list]]:
-    """Group entries into (channel, session_entries) pairs by 30-min gaps."""
-    by_channel: dict[str, list] = defaultdict(list)
+def group_by_session_id(entries: list) -> list[tuple[str, str, list]]:
+    """Group entries by session_id. Returns (channel, session_id, entries) tuples."""
+    by_session: dict[str, list] = defaultdict(list)
     for e in entries:
-        ch = get_channel(e.get("source", "unknown"))
-        by_channel[ch].append(e)
+        sid = e.get("session_id")
+        if sid:
+            by_session[sid].append(e)
 
     sessions = []
-    for channel, channel_entries in by_channel.items():
-        channel_entries.sort(key=lambda e: e.get("timestamp", ""))
-        current = [channel_entries[0]]
-        for entry in channel_entries[1:]:
-            prev_ts = datetime.fromisoformat(current[-1]["timestamp"])
-            curr_ts = datetime.fromisoformat(entry["timestamp"])
-            if (curr_ts - prev_ts).total_seconds() >= GAP_THRESHOLD_SECS:
-                sessions.append((channel, current))
-                current = [entry]
-            else:
-                current.append(entry)
-        sessions.append((channel, current))
+    for sid, session_entries in by_session.items():
+        session_entries.sort(key=lambda e: e.get("timestamp", ""))
+        sources = [e.get("source", "unknown") for e in session_entries]
+        channel = get_channel(Counter(sources).most_common(1)[0][0])
+        sessions.append((channel, sid, session_entries))
 
-    sessions.sort(key=lambda s: s[1][0].get("timestamp", ""))
+    sessions.sort(key=lambda s: s[2][0].get("timestamp", ""))
     return sessions
 
 
@@ -148,14 +137,14 @@ def main():
     if not entries:
         return
 
-    sessions = group_into_sessions(entries)
-    existing = load_summaries_by_start()
+    sessions = group_by_session_id(entries)
+    existing = load_summaries_by_uuid()
 
-    for channel, session in sessions:
+    for channel, sid, session in sessions:
         session_start = session[0]["timestamp"]
         session_end = session[-1]["timestamp"]
 
-        existing_summary = existing.get(session_start)
+        existing_summary = existing.get(sid)
 
         # Skip if nothing new since last summary AND summary is valid
         if (existing_summary
@@ -165,16 +154,6 @@ def main():
 
         result = summarize_session(session)
         sources = list(dict.fromkeys(e.get("source", "") for e in session))
-
-        # Use Claude Code session ID if available, otherwise preserve existing or generate new
-        session_ids = [e["session_id"] for e in session if e.get("session_id")]
-        if session_ids:
-            from collections import Counter
-            sid = Counter(session_ids).most_common(1)[0][0]
-        elif existing_summary:
-            sid = existing_summary["uuid"]
-        else:
-            sid = str(uuid.uuid4())
 
         summary = {
             "uuid": sid,

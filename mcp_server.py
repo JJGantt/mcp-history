@@ -410,9 +410,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         except Exception as e:
             return [types.TextContent(type="text", text=f"Invalid session timestamps: {e}")]
         entries = load_history_range(start, end)
-        sources = set(summary.get("sources", []))
-        if sources:
-            entries = [e for e in entries if e.get("source") in sources]
+        session_id = summary.get("uuid", "")
+        entries = [e for e in entries if e.get("session_id") == session_id]
         return [types.TextContent(type="text", text=format_entries_lightweight(entries))]
 
     if name == "get_history":
