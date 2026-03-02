@@ -97,8 +97,10 @@ def main():
         sys.exit(0)
 
     source = os.environ.get("CLAUDE_SOURCE", CONFIG["default_source"])
+    session_id = Path(transcript_path).stem if transcript_path else None
 
-    append_entry(source, user_msg, last_assistant)
+    append_entry(source, user_msg, last_assistant,
+                 **({"session_id": session_id} if session_id else {}))
 
     # Fork here: local write is done, so index_history.py can safely run after us.
     # Peer sync happens in the background and doesn't block the response.
@@ -112,12 +114,15 @@ def main():
         _notify("Warning: history hook could not reach peer — logged locally only.")
         sys.exit(0)
 
-    body = json.dumps({
+    peer_body = {
         "user": user_msg,
         "claude": last_assistant,
         "source": source,
         "timestamp": datetime.now().isoformat(),
-    }).encode()
+    }
+    if session_id:
+        peer_body["session_id"] = session_id
+    body = json.dumps(peer_body).encode()
 
     try:
         req = urllib.request.Request(
