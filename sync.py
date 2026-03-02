@@ -38,7 +38,7 @@ _FAIL_FILE = _CACHE_DIR / "sync_failures"
 
 _RSYNC_EXCLUDES = [
     "history/", "lists/", "notes/", "reminders/",
-    "history-chromadb/", ".*.tmp", "*.tmp",
+    ".*.tmp", "*.tmp",
     "*.sqlite3-wal", "*.sqlite3-shm",
 ]
 
