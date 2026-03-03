@@ -40,6 +40,7 @@ _RSYNC_EXCLUDES = [
     "history/", "lists/", "notes/", "reminders/", "health/",
     ".*.tmp", "*.tmp",
     "*.sqlite3-wal", "*.sqlite3-shm",
+    "sessions.json",  # Pi-specific bot session state — must not be overwritten by sync
 ]
 
 
