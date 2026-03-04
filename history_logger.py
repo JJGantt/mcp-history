@@ -88,6 +88,7 @@ def main():
 
     transcript_path = payload.get("transcript_path", "")
     last_assistant = payload.get("last_assistant_message", "").strip()
+    cwd = payload.get("cwd", "")
 
     if not last_assistant:
         sys.exit(0)
@@ -99,8 +100,13 @@ def main():
     source = os.environ.get("CLAUDE_SOURCE", CONFIG["default_source"])
     session_id = Path(transcript_path).stem if transcript_path else None
 
-    append_entry(source, user_msg, last_assistant,
-                 **({"session_id": session_id} if session_id else {}))
+    extra = {}
+    if session_id:
+        extra["session_id"] = session_id
+    if cwd:
+        extra["cwd"] = cwd
+
+    append_entry(source, user_msg, last_assistant, **extra)
 
     # Fork here: local write is done, so index_history.py can safely run after us.
     # Peer sync happens in the background and doesn't block the response.
@@ -122,6 +128,8 @@ def main():
     }
     if session_id:
         peer_body["session_id"] = session_id
+    if cwd:
+        peer_body["cwd"] = cwd
     body = json.dumps(peer_body).encode()
 
     try:
