@@ -38,8 +38,9 @@ _FAIL_FILE = _CACHE_DIR / "sync_failures"
 
 _RSYNC_EXCLUDES = [
     "history/", "lists/", "notes/", "reminders/", "health/",
+    "recipes/", "nutrition/",
     ".*.tmp", "*.tmp",
-    "*.sqlite3-wal", "*.sqlite3-shm",
+    "*.sqlite3", "*.sqlite3-wal", "*.sqlite3-shm",
     "sessions.json",  # Pi-specific bot session state — must not be overwritten by sync
 ]
 
@@ -131,19 +132,6 @@ def _run_merge(host: str):
         pass
 
 
-def _run_data_merge():
-    """Run mcp-data merge (lists, notes, reminders, health)."""
-    try:
-        merge_script = Path.home() / "mcp-data" / "merge.py"
-        if merge_script.exists():
-            subprocess.run(
-                [sys.executable, str(merge_script)],
-                capture_output=True, timeout=60,
-            )
-    except Exception:
-        pass
-
-
 def push(host: str):
     """Push local data to peer."""
     local_dir = CONFIG["data_dir"].rstrip("/") + "/"
@@ -151,7 +139,6 @@ def push(host: str):
     user = _PEER.get("ssh_user", "")
     _rsync(local_dir, f"{user}@{host}:{remote_dir}", host)
     _run_merge(host)
-    _run_data_merge()
 
 
 def pull(host: str):
@@ -161,7 +148,6 @@ def pull(host: str):
     user = _PEER.get("ssh_user", "")
     _rsync(f"{user}@{host}:{remote_dir}", local_dir, host)
     _run_merge(host)
-    _run_data_merge()
 
 
 def main():

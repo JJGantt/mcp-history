@@ -97,6 +97,10 @@ def main():
     if not user_msg:
         sys.exit(0)
 
+    # Skip tab-naming sessions (ai-terminal Haiku calls)
+    if "Give a 2-3 word tab title" in user_msg:
+        sys.exit(0)
+
     source = os.environ.get("CLAUDE_SOURCE", CONFIG["default_source"])
     session_id = Path(transcript_path).stem if transcript_path else None
 
