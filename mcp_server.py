@@ -405,8 +405,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         if not summary:
             return [types.TextContent(type="text", text=f"No session found with UUID '{uid}'.")]
         try:
-            start = datetime.fromisoformat(summary["start"])
-            end = datetime.fromisoformat(summary["end"])
+            start = datetime.fromisoformat(summary["start"]).replace(tzinfo=None)
+            end = datetime.fromisoformat(summary["end"]).replace(tzinfo=None)
         except Exception as e:
             return [types.TextContent(type="text", text=f"Invalid session timestamps: {e}")]
         entries = load_history_range(start, end)

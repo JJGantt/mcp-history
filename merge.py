@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import CONFIG, HISTORY_DIR
+from config import CONFIG, HISTORY_DIR, CHROMADB_DIR
 
 
 def _peer_config():
@@ -139,6 +139,21 @@ def find_reachable_host(hosts, user, key):
     return None
 
 
+def _invalidate_index_state(filename: str):
+    """Reset the indexer state for this date so it re-indexes after the file was rewritten."""
+    state_path = CHROMADB_DIR / "index_state.json"
+    if not state_path.exists():
+        return
+    try:
+        state = json.loads(state_path.read_text())
+        date_str = filename.replace(".json", "")
+        if date_str in state:
+            del state[date_str]
+            state_path.write_text(json.dumps(state) + "\n")
+    except Exception:
+        pass
+
+
 def main():
     if len(sys.argv) == 3:
         host, key = sys.argv[1], sys.argv[2]
@@ -176,6 +191,7 @@ def main():
 
         write_local(filename, merged)
         write_remote(host, user, key, remote_dir, filename, merged)
+        _invalidate_index_state(filename)
 
 
 if __name__ == "__main__":
